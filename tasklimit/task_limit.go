@@ -4,37 +4,70 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-redis/redis"
+	"log"
 	"sync"
 	"time"
 )
 
-type Handler func(x interface{}) error
+type Handler func(data []byte) error
+
+type Setter func(t *TaskLimit)
 
 type TaskLimit struct {
-	client      *redis.Client
-	rw          sync.RWMutex
-	exitsWorker bool
-	handler     Handler
-	taskQueue   string
-	limitQueue  string
-	rate        int64
-	lastTime    time.Time
-	cleanTime   time.Duration
+	client        *redis.Client
+	rw            sync.RWMutex
+	once          sync.Once
+	exitsWorker   bool
+	handler       Handler
+	taskQueue     string
+	limitQueue    string
+	rate          int64 // allow running rate every second
+	lastTime      time.Time
+	cleanDuration time.Duration
 }
 
-func NewLimitTask(client *redis.Client, taskName string, handler Handler, rate int64, clean time.Duration) *TaskLimit {
-	return &TaskLimit{
-		exitsWorker: false,
-		handler:     handler,
-		client:      client,
-		taskQueue:   fmt.Sprintf("%s:task", taskName),
-		limitQueue:  fmt.Sprintf("%s:limit", taskName),
-		rate:        rate,
-		cleanTime:   clean,
+func (t *TaskLimit) Init(setters ...Setter) *TaskLimit {
+	t.once.Do(func() {
+		t.exitsWorker = false
+		for _, setter := range setters {
+			setter(t)
+		}
+	})
+	return t
+}
+
+func WithTaskName(name string) Setter {
+	return func(t *TaskLimit) {
+		t.taskQueue = fmt.Sprintf("%s:task", name)
+		t.limitQueue = fmt.Sprintf("%s:limit", name)
 	}
 }
 
-func (t *TaskLimit) Do(task interface{}) {
+func WithRate(rate int64) Setter {
+	return func(t *TaskLimit) {
+		t.rate = rate
+	}
+}
+
+func WithCleanDuration(duration time.Duration) Setter {
+	return func(t *TaskLimit) {
+		t.cleanDuration = duration
+	}
+}
+
+func WithRedisClient(client *redis.Client) Setter {
+	return func(t *TaskLimit) {
+		t.client = client
+	}
+}
+
+func WithHandler(handler Handler) Setter {
+	return func(t *TaskLimit) {
+		t.handler = handler
+	}
+}
+
+func (t *TaskLimit) Do(taskParam interface{}) error {
 	t.rw.RLock()
 	if t.exitsWorker {
 		t.rw.RUnlock()
@@ -45,44 +78,69 @@ func (t *TaskLimit) Do(task interface{}) {
 	t.exitsWorker = true
 	t.lastTime = time.Now()
 	t.rw.Unlock()
+	log.Println("create new go worker ...")
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			if limit, _ := t.client.LLen(t.limitQueue).Result(); limit > t.rate {
-				break
-			}
-			count, _ := t.client.LPush(t.limitQueue, struct{}{}).Result()
-			if count == 1 {
-				t.client.Expire(t.limitQueue, 1*time.Second)
-			}
-			dataStr, _ := t.client.RPop(t.taskQueue).Result()
-			t.rw.RLock()
-			lastRunningTime := t.lastTime
-			t.rw.RUnlock()
-			if dataStr == "" {
-				if t.cleanTime < time.Since(lastRunningTime) {
-					t.rw.Lock()
-					t.exitsWorker = false
-					t.rw.Unlock()
-					return
+			for {
+				limit, err := t.client.LLen(t.limitQueue).Result()
+				if err != nil {
+					break
 				}
-				break
+				if limit > t.rate {
+					ttlTime, err := t.client.TTL(t.limitQueue).Result()
+					if err != nil {
+						break
+					}
+					if ttlTime < 0 {
+						t.client.Expire(t.limitQueue, time.Second)
+					}
+					log.Println("tow many task todo ,please waiting ....")
+					break
+				}
+				count, err := t.client.LPush(t.limitQueue, 0).Result()
+				if err != nil {
+					break
+				}
+				if count == 1 {
+					t.client.Expire(t.limitQueue, time.Second)
+				}
+				dataStr, err := t.client.RPop(t.taskQueue).Result()
+				if err != nil && err != redis.Nil {
+					break
+				}
+				t.rw.RLock()
+				lastRunningTime := t.lastTime
+				t.rw.RUnlock()
+				if dataStr == "" {
+					if t.cleanDuration < time.Since(lastRunningTime) {
+						log.Println("destroy go worker...")
+						t.rw.Lock()
+						t.exitsWorker = false
+						t.rw.Unlock()
+						return
+					}
+					break
+				}
+				t.rw.Lock()
+				t.lastTime = time.Now()
+				t.rw.Unlock()
+				go func(dataStr string) {
+					err := t.handler([]byte(dataStr))
+					if err != nil {
+						log.Println("err ... ")
+					}
+				}(dataStr)
 			}
-			t.rw.Lock()
-			t.lastTime = time.Now()
-			t.rw.Unlock()
-			go func(dataStr string) {
-				var x interface{}
-				json.Unmarshal([]byte(dataStr), &x)
-				t.handler(x)
-			}(dataStr)
 		}
+
 	}()
 exitsWorker:
-	data, _ := json.Marshal(task)
-	count, _ := t.client.LPush(t.taskQueue, data).Result()
-	if count == 1 {
-		t.client.Expire(t.taskQueue, 1*time.Second)
+	data, err := json.Marshal(taskParam)
+	if err != nil {
+		return err
 	}
+	t.client.LPush(t.taskQueue, data)
+	return nil
 }
