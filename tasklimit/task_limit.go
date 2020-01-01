@@ -68,10 +68,20 @@ func WithHandler(handler Handler) Setter {
 }
 
 func (t *TaskLimit) Do(taskParam interface{}) error {
+	data, err := json.Marshal(taskParam)
+	if err != nil {
+		return err
+	}
+	t.client.LPush(t.taskQueue, data)
+	t.notifyWorker()
+	return nil
+}
+
+func (t *TaskLimit) notifyWorker() {
 	t.rw.RLock()
 	if t.exitsWorker {
 		t.rw.RUnlock()
-		goto exitsWorker
+		return
 	}
 	t.rw.RUnlock()
 	t.rw.Lock()
@@ -136,11 +146,4 @@ func (t *TaskLimit) Do(taskParam interface{}) error {
 		}
 
 	}()
-exitsWorker:
-	data, err := json.Marshal(taskParam)
-	if err != nil {
-		return err
-	}
-	t.client.LPush(t.taskQueue, data)
-	return nil
 }
