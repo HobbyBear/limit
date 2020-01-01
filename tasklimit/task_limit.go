@@ -12,9 +12,9 @@ import (
 
 type Handler func(data []byte) error
 
-type Setter func(t *TaskLimit)
+type Setter func(t *Limit)
 
-type TaskLimit struct {
+type Limit struct {
 	client        *redis.Client
 	rw            sync.RWMutex
 	once          sync.Once
@@ -27,7 +27,7 @@ type TaskLimit struct {
 	cleanDuration time.Duration
 }
 
-func (t *TaskLimit) Init(setters ...Setter) *TaskLimit {
+func (t *Limit) Init(setters ...Setter) *Limit {
 	t.once.Do(func() {
 		t.exitsWorker = false
 		for _, setter := range setters {
@@ -38,37 +38,37 @@ func (t *TaskLimit) Init(setters ...Setter) *TaskLimit {
 }
 
 func WithTaskName(name string) Setter {
-	return func(t *TaskLimit) {
+	return func(t *Limit) {
 		t.taskQueue = fmt.Sprintf("%s:task", name)
 		t.limitQueue = fmt.Sprintf("%s:limit", name)
 	}
 }
 
 func WithRate(rate int64) Setter {
-	return func(t *TaskLimit) {
+	return func(t *Limit) {
 		t.rate = rate
 	}
 }
 
 func WithCleanDuration(duration time.Duration) Setter {
-	return func(t *TaskLimit) {
+	return func(t *Limit) {
 		t.cleanDuration = duration
 	}
 }
 
 func WithRedisClient(client *redis.Client) Setter {
-	return func(t *TaskLimit) {
+	return func(t *Limit) {
 		t.client = client
 	}
 }
 
 func WithHandler(handler Handler) Setter {
-	return func(t *TaskLimit) {
+	return func(t *Limit) {
 		t.handler = handler
 	}
 }
 
-func (t *TaskLimit) Do(taskParam interface{}) error {
+func (t *Limit) Do(taskParam interface{}) error {
 	data, err := json.Marshal(taskParam)
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func (t *TaskLimit) Do(taskParam interface{}) error {
 	return nil
 }
 
-func (t *TaskLimit) notifyWorker() {
+func (t *Limit) notifyWorker() {
 	t.rw.RLock()
 	if t.exitsWorker {
 		t.rw.RUnlock()

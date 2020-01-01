@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-redis/redis"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,16 +24,19 @@ func TestNewLimitTask(t *testing.T) {
 		fmt.Println(p.Name)
 		return nil
 	}
-	taskLimiter := new(TaskLimit)
+	taskLimiter := new(Limit)
 	taskLimiter.Init(
 		WithRedisClient(client),
 		WithTaskName("test"),
 		WithHandler(handler),
-		WithRate(10),
+		WithRate(100),
 		WithCleanDuration(3*time.Second),
 	)
+	var wg sync.WaitGroup
+	wg.Add(1000)
 	for i := 0; i < 1000; i++ {
 		go func() {
+			wg.Done()
 			taskLimiter.Do(people{Name: "xch"})
 		}()
 	}
