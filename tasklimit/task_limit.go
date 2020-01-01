@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/go-redis/redis"
 	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -89,7 +90,7 @@ func (t *TaskLimit) notifyWorker() {
 	t.lastTime = time.Now()
 	t.rw.Unlock()
 	log.Println("create new go worker ...")
-	go func() {
+	goFunc(func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -136,14 +137,38 @@ func (t *TaskLimit) notifyWorker() {
 				t.rw.Lock()
 				t.lastTime = time.Now()
 				t.rw.Unlock()
-				go func(dataStr string) {
+				goFuncWithString(func(dataStr string) {
 					err := t.handler([]byte(dataStr))
 					if err != nil {
 						log.Println("err ... ")
 					}
-				}(dataStr)
+				}, dataStr)
 			}
 		}
 
+	})
+}
+
+func goFuncWithString(f func(data string), data string) {
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				stackInfo := debug.Stack()
+				log.Println(string(stackInfo), p)
+			}
+		}()
+		f(data)
+	}()
+}
+
+func goFunc(f func()) {
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				stackInfo := debug.Stack()
+				log.Println(string(stackInfo), p)
+			}
+		}()
+		f()
 	}()
 }
