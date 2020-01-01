@@ -45,7 +45,6 @@ func (t *TaskLimit) Do(task interface{}) {
 	t.lastTime = time.Now()
 	t.rw.Unlock()
 	go func() {
-		var wg WaitGroupWrapper
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -65,7 +64,6 @@ func (t *TaskLimit) Do(task interface{}) {
 					t.rw.Lock()
 					t.exitsWorker = false
 					t.rw.Unlock()
-					wg.Wait()
 					return
 				}
 				break
@@ -73,11 +71,11 @@ func (t *TaskLimit) Do(task interface{}) {
 			t.rw.Lock()
 			t.lastTime = time.Now()
 			t.rw.Unlock()
-			wg.Wrap(func(dataStr string) {
+			go func(dataStr string) {
 				var x interface{}
 				json.Unmarshal([]byte(dataStr), &x)
 				t.handler(x)
-			}, dataStr)
+			}(dataStr)
 		}
 	}()
 exitsWorker:
@@ -86,16 +84,4 @@ exitsWorker:
 	if count == 1 {
 		t.client.Expire(t.taskQueue, 1*time.Second)
 	}
-}
-
-type WaitGroupWrapper struct {
-	sync.WaitGroup
-}
-
-func (w *WaitGroupWrapper) Wrap(cb func(dataStr string), dataStr string) {
-	w.Add(1)
-	go func() {
-		cb(dataStr)
-		w.Done()
-	}()
 }
