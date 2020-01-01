@@ -37,7 +37,7 @@ func NewLimitTask(client *redis.Client, taskName string, handler Handler, rate i
 func (t *TaskLimit) Do(task interface{}) {
 	t.rw.RLock()
 	if t.exitsWorker {
-		t.rw.Unlock()
+		t.rw.RUnlock()
 		goto exitsWorker
 	}
 	t.rw.RUnlock()
