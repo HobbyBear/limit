@@ -40,6 +40,7 @@ func (t *TaskLimit) Do(task interface{}) {
 		t.rw.Unlock()
 		goto exitsWorker
 	}
+	t.rw.RUnlock()
 	t.rw.Lock()
 	t.exitsWorker = true
 	t.lastTime = time.Now()
