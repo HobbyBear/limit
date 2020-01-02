@@ -3,11 +3,12 @@ package tasklimit
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/go-redis/redis"
 	"log"
 	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/go-redis/redis"
 )
 
 type Handler func(data []byte) error
@@ -109,29 +110,23 @@ func (t *Limit) notifyWorker() {
 					if count == 1 {
 						t.client.Expire(t.limitQueue, time.Second)
 					}
-					dataStr, err := t.client.RPop(t.taskQueue).Result()
+					dataStr, err := t.client.BRPop(t.cleanDuration, t.taskQueue).Result()
 					if err != nil && err != redis.Nil {
 						break
 					}
-					lastRunningTime := t.lastTime
-					if dataStr == "" {
-						if t.cleanDuration < time.Since(lastRunningTime) {
-							log.Println("destroy go worker...")
-							<-t.exitsWorker
-							return
-						}
-						break
+					if err == redis.Nil {
+						log.Println("destroy go worker...")
+						<-t.exitsWorker
+						return
 					}
-					t.lastTime = time.Now()
-					goFuncWithString(func(dataStr string) {
-						err := t.handler([]byte(dataStr))
+					goFuncWithString(func(data string) {
+						err := t.handler([]byte(data))
 						if err != nil {
 							log.Println("err ... ")
 						}
-					}, dataStr)
+					}, dataStr[1])
 				}
 			}
-
 		})
 	default:
 

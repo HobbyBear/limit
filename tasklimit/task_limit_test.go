@@ -3,10 +3,11 @@ package tasklimit
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/go-redis/redis"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/go-redis/redis"
 )
 
 func TestNewLimitTask(t *testing.T) {
@@ -50,7 +51,16 @@ func Test01(t *testing.T) {
 		Password: "", // no password set
 		DB:       0,  // use default DB
 	})
-	count, err := client.LPush("name", struct{}{}).Result()
+	type person struct {
+		Name string
+		Age  int
+	}
+	//p := person{
+	//	Name: "xch",
+	//	Age:  16,
+	//}
+
+	count, err := client.BRPop(1*time.Second, "source", "source1").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
